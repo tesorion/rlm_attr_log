@@ -1,0 +1,366 @@
+/*
+ *   This program is is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License, version 2 if the
+ *   License as published by the Free Software Foundation.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program; if not, write to the Free Software
+ *   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+ */
+
+/* Partially based and insipired on rlm_detail and rlm_rest */
+
+/**
+ * $Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $
+ * @file rlm_attr_log.c
+ * @brief Qnet specific logging code.
+ *
+ * @copyright 2013 Quarantainenet
+ * @copyright 2013 Justin Ossevoort \<justin@quarantainenet.nl\>
+ */
+RCSID("$Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $")
+
+#include <freeradius-devel/radiusd.h>
+#include <freeradius-devel/modules.h>
+
+typedef struct rlm_attr_log_t {
+	fr_hash_table_t *ht; /* When certain attributes should be suppressed */
+	uint32_t log_size;   /* Maximim size of the log message to generate */
+	char const *prefix;  /* Prefix to include before every log message */
+	fr_ipaddr_t ip;      /* IP address to send logging to */
+	uint16_t port;       /* UDP port to send logging to */
+
+	int sockfd;
+} rlm_attr_log_t;
+
+static const CONF_PARSER module_config[] = {
+	{ "log_size", FR_CONF_OFFSET(PW_TYPE_INTEGER,   rlm_attr_log_t, log_size), 65400       },
+	{ "prefix",   FR_CONF_OFFSET(PW_TYPE_STRING,    rlm_attr_log_t, prefix  ), "Qradius: " },
+	{ "ip",       FR_CONF_OFFSET(PW_TYPE_IPV4_ADDR, rlm_attr_log_t, ip      ), NULL        },
+	{ "port",     FR_CONF_OFFSET(PW_TYPE_SHORT,     rlm_attr_log_t, port    ), 1514        },
+
+	{ NULL, -1, 0, NULL, NULL } /* end the list */
+};
+
+static uint32_t attr_hash(void const *data)
+{
+	DICT_ATTR const *da = data;
+	return fr_hash(&da, sizeof(da));
+}
+
+static int attr_cmp(void const *a, void const *b)
+{
+	DICT_ATTR const *one = a;
+	DICT_ATTR const *two = b;
+
+	return one - two;
+}
+
+static int mod_instantiate(CONF_SECTION *conf, void *instance)
+{
+	rlm_attr_log_t *inst = instance;
+	inst->sockfd = -1;
+	inst->ht = NULL;
+
+	/*
+	 * Setup logging socket
+	 */
+
+	struct sockaddr_in sin = {
+		.sin_family = AF_INET,
+		.sin_port   = htons(inst->port),
+		.sin_addr   = {
+				.s_addr = htonl(inst->ip.ipaddr.ip4addr)
+			}
+	};
+
+	int r = inst->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (r == -1) {
+		ERROR("rlm_attr_log: Failed to create logging socket: %s", fr_strerror(errno));
+		goto err_out;
+	}
+	r = connect(inst->sockfd, &sin, sizeof(sin));
+	if (r == -1) {
+		ERROR("rlm_attr_log: Failed to connect logging socket: %s", fr_strerror(errno));
+		goto err_out;
+	}
+
+	/*
+	 * Suppress certain attributes.
+	 *
+	 * Code from 'rlm_detail'
+	 */
+	cs = cf_section_sub_find(conf, "suppress");
+	if (cs) {
+		CONF_ITEM *ci;
+
+		inst->ht = fr_hash_table_create(attr_hash, attr_cmp, NULL);
+
+		for (ci = cf_item_find_next(cs, NULL);
+		     ci != NULL;
+		     ci = cf_item_find_next(cs, ci)) {
+			char const *attr;
+			DICT_ATTR const *da;
+
+			if (!cf_item_is_pair(ci)) continue;
+
+			attr = cf_pair_attr(cf_itemtopair(ci));
+			if (!attr) continue; /* pair-anoia */
+
+			da = dict_attrbyname(attr);
+			if (!da) {
+				cf_log_err_cs(conf, "No such attribute '%s'", attr);
+				goto err_out;
+			}
+
+			/*
+			 * Be kind to minor mistakes.
+			 */
+			if (fr_hash_table_finddata(inst->ht, da)) {
+				WARN("rlm_attr_log: Ignoring duplicate entry '%s'", attr);
+				continue;
+			}
+
+
+			if (!fr_hash_table_insert(inst->ht, da)) {
+				ERROR("rlm_attr_log: Failed inserting '%s' into suppression table", attr);
+				goto err_out;
+			}
+
+			DEBUG("rlm_attr_log: '%s' suppressed, will not appear in detail output", attr);
+		}
+
+		/*
+		 * If we didn't suppress anything, delete the hash table.
+		 */
+		if (fr_hash_table_num_elements(inst->ht) == 0) {
+			fr_hash_table_free(inst->ht);
+			inst->ht = NULL;
+		}
+	}
+
+	return 0;
+
+err_out:
+	if (inst->ht) {
+		fr_hash_table_free(inst->ht);
+		inst->ht = NULL;
+	}
+	if (inst->sockfd >= 0) {
+		close(inst->sockfd);
+		inst->sockfd = -1;
+	}
+	return -1;
+}
+
+/* Based upon rest_encode_json() from 'rlm_rest/rest.c', though heavily simplified */
+static int log_attrs_json(rlm_attr_log_t *inst, REQUEST *request, REQUEST_PACKET *packet, char *packet_type, char *out, size_t size)
+{
+	vp_cursor_t cursor;
+	VALUE_PAIR *vp, *next;
+	char *p = out;           /* Position in buffer */
+	char *encoded = p;       /* Position in buffer of last fully encoded attribute or value */
+	size_t freespace = size; /* Size left in buffer */
+	char const *type;        /* Used when determining attribute value types */
+	int truncated = 0;
+	size_t len;
+
+	{ /* Begin packet hash */
+		len = snprintf(p, freespace - 1 /* for closing curly bracket */, "\"%s\":{", packet_type);
+		if (len > freespace - 1)
+			return 0;
+		
+		p += len;
+		freespace -= len + 1 /* Reserve 1 byte for the closing curly bracket */;
+		encoded = p;
+	}
+
+	/* Make sure multi-valued attributes are grouped together */
+	pairsort(&packet->vps, attrtagcmp);
+
+	fr_cursor_init(&ctx->cursor, &packet->vps);
+	next_attr: for (;;) {
+		vp = fr_cursor_current(&cursor);
+
+		/* Encoded all VPs */
+		if (!vp) break;
+
+		/* Suppress certain attributes */
+		if (inst->ht && fr_hash_table_finddata(inst->ht, vp->da)) {
+			/* Skip possible more multi-values of this attribute and advance cursor */
+			while ((next = fr_cursor_next(&ctx->cursor)) && (vp->da == next->da)) vp = next;
+			continue;
+		}
+
+		/* New attribute: Write name, type and beginning of value array */
+		/* (while reservering 2 bytes for closing bracket and curly bracket) */
+		type = fr_int2str(dict_attr_types, vp->da->type, "<INVALID>");
+		len = snprintf(p, freespace - 2, "\"%s\":{\"type:\":\"%s\",\"value\":[", vp->da->name, type);
+		if (len > freespace - 2) {
+			/* Skip possible more multi-values of this attribute and advance cursor */
+			while ((next = fr_cursor_next(&ctx->cursor)) && (vp->da == next->da)) vp = next;
+			truncated = 1;
+			continue;
+		}
+		p += len;
+		freespace -= len  + 2 /* Reserve 2 bytes for closing backet and curly bracket */;
+
+		/* Add values */
+		for (;;) {
+			len = vp_prints_value_json(p, freespace, vp);
+			if (len > freespace) goto no_space;
+
+			if ((next = fr_cursor_next(&ctx->cursor)) == NULL || (vp->da != next->da)) break;
+			vp = next;
+
+			if (freespace < 1) goto no_space;
+			*p++ = ',';
+			freespace--;
+			continue;
+
+		no_space:
+			/* Rewind to last succesfully encoded offset */
+			p = encoded;
+			freespace = size - (p - out);
+
+			/* Skip possible more multi-values of this attribute and advance cursor */
+			while ((next = fr_cursor_next(&ctx->cursor)) && (vp->da == next->da)) vp = next;
+
+			truncated = 1;
+			goto next_attr;
+		}
+
+		/* Attribute fully added */
+		*p++ = ']'; *p++ = '}'; /* We already reserved 2 bytes earlier on */
+		encoded = p;
+
+		if (next) {
+			if (freespace < 1) {
+				truncated = 1;
+				break;
+			}
+			*p++ = ',';
+			freespace--;
+		}
+	}
+
+	if (truncated) WARN("rlm_attr_log: output buffer too small, some attributes were left out");
+
+	*p++ = '}'; /* We already reserved 1 byte earlier on */
+	return size - freespace;
+}
+
+static void log_request(rlm_attr_log_t *inst, REQUEST *request)
+{
+	size_t size = inst->log_size;
+	char *out = (char*) talloc_size(REQUEST, size);
+	if (!out) {
+		ERROR("rlm_attr_log: unable to allocate output buffer");
+		return;
+	}
+
+	int truncated = 0, len;
+	char *cur = out;
+	size_t freespace = size;
+
+	len = snprintf(cur, freespace + 1, "%s{", inst->prefix);
+	rad_assert(len < freespace + 1);
+	cur += len;
+	freespace -= len + 1 /* Reserve 1 byte for closing curly bracket */;
+
+	if (!request->packet) {
+		WARN("rlm_attr_log: no request packet to log");
+	} else {
+		/* Add request */
+		len = log_attrs(inst, request, request->packet, "request", cur, freespace);
+		if (len == 0) {
+			truncated = 1;
+		} else {
+			cur += len;
+			freespace -= len;
+		}
+	}
+
+	if (!request->reply) {
+		WARN("rlm_attr_log: no reply packet to log");
+	} else {
+		/* Add reply (and skip 1 byte for ',' on succes) */
+		len = log_attrs(inst, request, request->reply, "reply", cur + 1, freespace - 1);
+		if (len == 0) {
+			truncated = 1;
+		} else {
+			*cur++ = ',';
+			freespace --;
+
+			cur += len;
+			freespace -= len;
+		}
+	}
+
+	*cur++ = '}'; /* Space already reserved earlier on */
+
+	if (truncated)
+		WARN("rlm_attr_log: unable to fit both request and reply in output buffer");
+
+	len = send(inst->sockfd, out, cur - out, MSG_DONTWAIT);
+	if (len == -1) {
+		WARN("rlm_attr_log: error sending log message: %s", fr_syserror(errno));
+	} elsif (len < cur - out) {
+		WARN("rlm_attr_log: truncated log message");
+	}
+
+	talloc_free(out);
+}
+
+static rlm_rcode_t CC_HINT(nonnull) mod_post_auth(void *instance, REQUEST *request)
+{
+	rlm_attr_log_t *inst = instance;
+	log_request(instance, request);
+	return RLM_MODULE_OK;
+}
+
+static rlm_rcode_t CC_HINT(nonnull) mod_accounting(void *instance, REQUEST *request)
+{
+	rlm_attr_log_t *inst = instance;
+	log_request(instance, request);
+	return RLM_MODULE_OK;
+}
+
+static int mod_detach(void *instance)
+{
+	rlm_attr_log_t *inst = instance;
+	if (inst->ht) {
+		fr_hash_table_free(inst->ht);
+		inst->ht = NULL;
+	}
+	if (inst->sockfd >= 0) {
+		close(inst->sockfd);
+		inst->sockfd = -1;
+	}
+	return 0;
+}
+
+module_t rlm_attr_log = {
+	RLM_MODULE_INIT,
+	"attr_log",
+	RLM_TYPE_THREAD_SAFE,
+	sizeof(rlm_attr_log_t),
+	module_config,
+	mod_instantiate,   /* instantiation */
+	mod_detach,        /* detach */
+	{
+		NULL,           /* authentication */
+		mod_authorize,  /* authorization */
+		NULL,           /* preaccounting */
+		mod_accounting, /* accounting */
+		NULL,           /* checksimul */
+		NULL,           /* pre-proxy */
+		NULL,           /* post-proxy */
+		mod_post_auth   /* post-auth */
+	},
+};
