@@ -27,6 +27,7 @@ RCSID("$Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $")
 
 #include <freeradius-devel/radiusd.h>
 #include <freeradius-devel/modules.h>
+#include <freeradius-devel/rad_assert.h>
 
 typedef struct rlm_attr_log_t {
 	fr_hash_table_t *ht; /* When certain attributes should be suppressed */
@@ -39,10 +40,10 @@ typedef struct rlm_attr_log_t {
 } rlm_attr_log_t;
 
 static const CONF_PARSER module_config[] = {
-	{ "log_size", FR_CONF_OFFSET(PW_TYPE_INTEGER,   rlm_attr_log_t, log_size), 65400       },
+	{ "log_size", FR_CONF_OFFSET(PW_TYPE_INTEGER,   rlm_attr_log_t, log_size), "65400"     },
 	{ "prefix",   FR_CONF_OFFSET(PW_TYPE_STRING,    rlm_attr_log_t, prefix  ), "Qradius: " },
-	{ "ip",       FR_CONF_OFFSET(PW_TYPE_IPV4_ADDR, rlm_attr_log_t, ip      ), NULL        },
-	{ "port",     FR_CONF_OFFSET(PW_TYPE_SHORT,     rlm_attr_log_t, port    ), 1514        },
+	{ "ip",       FR_CONF_OFFSET(PW_TYPE_IPV4_ADDR, rlm_attr_log_t, ip      ), "127.0.0.1" },
+	{ "port",     FR_CONF_OFFSET(PW_TYPE_SHORT,     rlm_attr_log_t, port    ), "1514"      },
 
 	{ NULL, -1, 0, NULL, NULL } /* end the list */
 };
@@ -75,18 +76,18 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 		.sin_family = AF_INET,
 		.sin_port   = htons(inst->port),
 		.sin_addr   = {
-				.s_addr = htonl(inst->ip.ipaddr.ip4addr)
+				.s_addr = htonl(inst->ip.ipaddr.ip4addr.s_addr)
 			}
 	};
 
 	int r = inst->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 	if (r == -1) {
-		ERROR("rlm_attr_log: Failed to create logging socket: %s", fr_strerror(errno));
+		ERROR("rlm_attr_log: Failed to create logging socket: %s", fr_strerror());
 		goto err_out;
 	}
 	r = connect(inst->sockfd, &sin, sizeof(sin));
 	if (r == -1) {
-		ERROR("rlm_attr_log: Failed to connect logging socket: %s", fr_strerror(errno));
+		ERROR("rlm_attr_log: Failed to connect logging socket: %s", fr_strerror());
 		goto err_out;
 	}
 
@@ -95,7 +96,7 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 	 *
 	 * Code from 'rlm_detail'
 	 */
-	cs = cf_section_sub_find(conf, "suppress");
+	CONF_SECTION *cs = cf_section_sub_find(conf, "suppress");
 	if (cs) {
 		CONF_ITEM *ci;
 
@@ -159,7 +160,7 @@ err_out:
 }
 
 /* Based upon rest_encode_json() from 'rlm_rest/rest.c', though heavily simplified */
-static int log_attrs_json(rlm_attr_log_t *inst, REQUEST *request, REQUEST_PACKET *packet, char *packet_type, char *out, size_t size)
+static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_PACKET *packet, const char *packet_type, char *out, size_t size)
 {
 	vp_cursor_t cursor;
 	VALUE_PAIR *vp, *next;
@@ -183,7 +184,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, REQUEST *request, REQUEST_PACKET
 	/* Make sure multi-valued attributes are grouped together */
 	pairsort(&packet->vps, attrtagcmp);
 
-	fr_cursor_init(&ctx->cursor, &packet->vps);
+	fr_cursor_init(&cursor, &packet->vps);
 	next_attr: for (;;) {
 		vp = fr_cursor_current(&cursor);
 
@@ -193,7 +194,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, REQUEST *request, REQUEST_PACKET
 		/* Suppress certain attributes */
 		if (inst->ht && fr_hash_table_finddata(inst->ht, vp->da)) {
 			/* Skip possible more multi-values of this attribute and advance cursor */
-			while ((next = fr_cursor_next(&ctx->cursor)) && (vp->da == next->da)) vp = next;
+			while ((next = fr_cursor_next(&cursor)) && (vp->da == next->da)) vp = next;
 			continue;
 		}
 
@@ -203,7 +204,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, REQUEST *request, REQUEST_PACKET
 		len = snprintf(p, freespace - 2, "\"%s\":{\"type:\":\"%s\",\"value\":[", vp->da->name, type);
 		if (len > freespace - 2) {
 			/* Skip possible more multi-values of this attribute and advance cursor */
-			while ((next = fr_cursor_next(&ctx->cursor)) && (vp->da == next->da)) vp = next;
+			while ((next = fr_cursor_next(&cursor)) && (vp->da == next->da)) vp = next;
 			truncated = 1;
 			continue;
 		}
@@ -215,7 +216,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, REQUEST *request, REQUEST_PACKET
 			len = vp_prints_value_json(p, freespace, vp);
 			if (len > freespace) goto no_space;
 
-			if ((next = fr_cursor_next(&ctx->cursor)) == NULL || (vp->da != next->da)) break;
+			if ((next = fr_cursor_next(&cursor)) == NULL || (vp->da != next->da)) break;
 			vp = next;
 
 			if (freespace < 1) goto no_space;
@@ -229,7 +230,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, REQUEST *request, REQUEST_PACKET
 			freespace = size - (p - out);
 
 			/* Skip possible more multi-values of this attribute and advance cursor */
-			while ((next = fr_cursor_next(&ctx->cursor)) && (vp->da == next->da)) vp = next;
+			while ((next = fr_cursor_next(&cursor)) && (vp->da == next->da)) vp = next;
 
 			truncated = 1;
 			goto next_attr;
@@ -258,7 +259,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, REQUEST *request, REQUEST_PACKET
 static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 {
 	size_t size = inst->log_size;
-	char *out = (char*) talloc_size(REQUEST, size);
+	char *out = (char*) talloc_size(request, size);
 	if (!out) {
 		ERROR("rlm_attr_log: unable to allocate output buffer");
 		return;
@@ -266,7 +267,7 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 
 	int truncated = 0, len;
 	char *cur = out;
-	size_t freespace = size;
+	int freespace = size;
 
 	len = snprintf(cur, freespace + 1, "%s{", inst->prefix);
 	rad_assert(len < freespace + 1);
@@ -277,7 +278,7 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 		WARN("rlm_attr_log: no request packet to log");
 	} else {
 		/* Add request */
-		len = log_attrs(inst, request, request->packet, "request", cur, freespace);
+		len = log_attrs_json(inst, request, request->packet, "request", cur, freespace);
 		if (len == 0) {
 			truncated = 1;
 		} else {
@@ -290,7 +291,7 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 		WARN("rlm_attr_log: no reply packet to log");
 	} else {
 		/* Add reply (and skip 1 byte for ',' on succes) */
-		len = log_attrs(inst, request, request->reply, "reply", cur + 1, freespace - 1);
+		len = log_attrs_json(inst, request, request->reply, "reply", cur + 1, freespace - 1);
 		if (len == 0) {
 			truncated = 1;
 		} else {
@@ -310,7 +311,7 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 	len = send(inst->sockfd, out, cur - out, MSG_DONTWAIT);
 	if (len == -1) {
 		WARN("rlm_attr_log: error sending log message: %s", fr_syserror(errno));
-	} elsif (len < cur - out) {
+	} else if (len < cur - out) {
 		WARN("rlm_attr_log: truncated log message");
 	}
 
@@ -320,14 +321,14 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 static rlm_rcode_t CC_HINT(nonnull) mod_post_auth(void *instance, REQUEST *request)
 {
 	rlm_attr_log_t *inst = instance;
-	log_request(instance, request);
+	log_request(inst, request);
 	return RLM_MODULE_OK;
 }
 
 static rlm_rcode_t CC_HINT(nonnull) mod_accounting(void *instance, REQUEST *request)
 {
 	rlm_attr_log_t *inst = instance;
-	log_request(instance, request);
+	log_request(inst, request);
 	return RLM_MODULE_OK;
 }
 
@@ -355,7 +356,7 @@ module_t rlm_attr_log = {
 	mod_detach,        /* detach */
 	{
 		NULL,           /* authentication */
-		mod_authorize,  /* authorization */
+		NULL,           /* authorization */
 		NULL,           /* preaccounting */
 		mod_accounting, /* accounting */
 		NULL,           /* checksimul */
