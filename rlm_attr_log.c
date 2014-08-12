@@ -166,6 +166,7 @@ err_out:
 static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_PACKET *packet, const char *packet_type, char *out, size_t size)
 {
 	vp_cursor_t cursor;
+	DICT_VALUE *dv;
 	VALUE_PAIR *vp, *next;
 	char *p = out;           /* Position in buffer */
 	char *encoded = p;       /* Position in buffer of last fully encoded attribute or value */
@@ -201,9 +202,21 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 			continue;
 		}
 
+		/* Lookup possibly dictionary mapped values (see also 'src/lib/print.c') */
+		switch (vp->da->type) {
+			case PW_TYPE_INTEGER:
+			case PW_TYPE_BYTE:
+			case PW_TYPE_SHORT:
+				dv = dict_valbyattr(vp->da->attr, vp->da->vendor, vp->data.integer);
+				break;
+
+			default:
+				dv = NULL;
+		}
+
 		/* New attribute: Write name, type and beginning of value array */
 		/* (while reservering 2 bytes for closing bracket and curly bracket) */
-		type = fr_int2str(dict_attr_types, vp->da->type, "<INVALID>");
+		type = ( dv ? "mapped" : fr_int2str(dict_attr_types, vp->da->type, "<INVALID>") );
 		len = snprintf(p, freespace - 2, "\"%s\":{\"type:\":\"%s\",\"value\":[", vp->da->name, type);
 		if (len > freespace - 2) {
 			/* Skip possible more multi-values of this attribute and advance cursor */
@@ -216,7 +229,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 
 		/* Add values */
 		for (;;) {
-			len = vp_prints_value_json(p, freespace, vp);
+			len = ( dv ? snprintf(p, freespace, "\"%s\"", dv->name) :  vp_prints_value_json(p, freespace, vp) );
 			if (len > freespace) goto no_space;
 			p += len;
 			freespace -= len;
