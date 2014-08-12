@@ -237,6 +237,8 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 			if ((next = fr_cursor_next(&cursor)) == NULL || (vp->da != next->da)) break;
 			vp = next;
 
+			if (dv) dv = dict_valbyattr(vp->da->attr, vp->da->vendor, vp->data.integer);
+
 			if (freespace < 1) goto no_space;
 			*p++ = ',';
 			freespace--;
@@ -269,6 +271,12 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 	}
 
 	if (truncated) WARN("rlm_attr_log: output buffer too small, some attributes were left out");
+
+	/* Handle special case where the last attribute didn't fit */
+	if (p[-1] == ',') {
+		p--;
+		freespace++;
+	}
 
 	*p++ = '}'; /* We already reserved 1 byte earlier on */
 	return size - freespace;
