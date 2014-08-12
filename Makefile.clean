@@ -1,0 +1,11 @@
+TARGET		= rlm_attr_log
+SRCS		= rlm_attr_log.c
+HEADERS		= config.h
+RLM_CFLAGS	=
+RLM_LIBS	= 
+
+include ../rules.mak
+
+$(STATIC_OBJS): $(HEADERS)
+
+$(DYNAMIC_OBJS): $(HEADERS)

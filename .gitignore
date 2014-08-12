@@ -1,0 +1,4 @@
+all.mk
+config.h
+config.log
+config.status
