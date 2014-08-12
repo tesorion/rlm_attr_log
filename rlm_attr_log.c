@@ -64,6 +64,8 @@ static int attr_cmp(void const *a, void const *b)
 
 static int mod_instantiate(CONF_SECTION *conf, void *instance)
 {
+	DEBUG3("rlm_attr_log: Initializing");
+
 	rlm_attr_log_t *inst = instance;
 	inst->sockfd = -1;
 	inst->ht = NULL;
@@ -75,9 +77,7 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 	struct sockaddr_in sin = {
 		.sin_family = AF_INET,
 		.sin_port   = htons(inst->port),
-		.sin_addr   = {
-				.s_addr = htonl(inst->ip.ipaddr.ip4addr.s_addr)
-			}
+		.sin_addr   = inst->ip.ipaddr.ip4addr
 	};
 
 	int r = inst->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -145,6 +145,7 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 		}
 	}
 
+	DEBUG2("rlm_attr_log: Initialized");
 	return 0;
 
 err_out:
@@ -156,6 +157,8 @@ err_out:
 		close(inst->sockfd);
 		inst->sockfd = -1;
 	}
+
+	ERROR("rlm_attr_log: Initialisation failed");
 	return -1;
 }
 
@@ -215,6 +218,8 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 		for (;;) {
 			len = vp_prints_value_json(p, freespace, vp);
 			if (len > freespace) goto no_space;
+			p += len;
+			freespace -= len;
 
 			if ((next = fr_cursor_next(&cursor)) == NULL || (vp->da != next->da)) break;
 			vp = next;
@@ -258,12 +263,16 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 
 static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 {
+	DEBUG3("rlm_attr_log: logging request");
+
 	size_t size = inst->log_size;
 	char *out = (char*) talloc_size(request, size);
 	if (!out) {
 		ERROR("rlm_attr_log: unable to allocate output buffer");
 		return;
 	}
+
+	DEBUG3("rlm_attr_log: allocated output buffer");
 
 	int truncated = 0, len;
 	char *cur = out;
@@ -273,6 +282,8 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 	rad_assert(len < freespace + 1);
 	cur += len;
 	freespace -= len + 1 /* Reserve 1 byte for closing curly bracket */;
+
+	DEBUG3("rlm_attr_log: added prefix");
 
 	if (!request->packet) {
 		WARN("rlm_attr_log: no request packet to log");
@@ -286,6 +297,8 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 			freespace -= len;
 		}
 	}
+
+	DEBUG3("rlm_attr_log: added request");
 
 	if (!request->reply) {
 		WARN("rlm_attr_log: no reply packet to log");
@@ -303,10 +316,14 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 		}
 	}
 
+	DEBUG3("rlm_attr_log: added reply");
+
 	*cur++ = '}'; /* Space already reserved earlier on */
 
 	if (truncated)
 		WARN("rlm_attr_log: unable to fit both request and reply in output buffer");
+
+	DEBUG3("rlm_attr_log: message complete");
 
 	len = send(inst->sockfd, out, cur - out, MSG_DONTWAIT);
 	if (len == -1) {
@@ -315,25 +332,41 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 		WARN("rlm_attr_log: truncated log message");
 	}
 
+	DEBUG2("rlm_attr_log: message sent");
+
 	talloc_free(out);
+
+	DEBUG3("rlm_attr_log: output buffer freed");
 }
 
-static rlm_rcode_t CC_HINT(nonnull) mod_post_auth(void *instance, REQUEST *request)
+static rlm_rcode_t CC_HINT(nonnull) mod_preacct(void *instance, REQUEST *request)
 {
+	DEBUG("rlm_attr_log: mod_preacct called");
 	rlm_attr_log_t *inst = instance;
 	log_request(inst, request);
-	return RLM_MODULE_OK;
+	return RLM_MODULE_NOOP;
 }
 
 static rlm_rcode_t CC_HINT(nonnull) mod_accounting(void *instance, REQUEST *request)
 {
+	DEBUG("rlm_attr_log: mod_accounting called");
 	rlm_attr_log_t *inst = instance;
 	log_request(inst, request);
-	return RLM_MODULE_OK;
+	return RLM_MODULE_NOOP;
+}
+
+static rlm_rcode_t CC_HINT(nonnull) mod_post_auth(void *instance, REQUEST *request)
+{
+	DEBUG("rlm_attr_log: mod_post_auth called");
+	rlm_attr_log_t *inst = instance;
+	log_request(inst, request);
+	return RLM_MODULE_NOOP;
 }
 
 static int mod_detach(void *instance)
 {
+	DEBUG3("rlm_attr_log: Detaching");
+
 	rlm_attr_log_t *inst = instance;
 	if (inst->ht) {
 		fr_hash_table_free(inst->ht);
@@ -343,6 +376,8 @@ static int mod_detach(void *instance)
 		close(inst->sockfd);
 		inst->sockfd = -1;
 	}
+
+	DEBUG2("rlm_attr_log: Detached");
 	return 0;
 }
 
@@ -357,7 +392,7 @@ module_t rlm_attr_log = {
 	{
 		NULL,           /* authentication */
 		NULL,           /* authorization */
-		NULL,           /* preaccounting */
+		mod_preacct,    /* preaccounting */
 		mod_accounting, /* accounting */
 		NULL,           /* checksimul */
 		NULL,           /* pre-proxy */
