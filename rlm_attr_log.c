@@ -217,7 +217,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 		/* New attribute: Write name, type and beginning of value array */
 		/* (while reservering 2 bytes for closing bracket and curly bracket) */
 		type = ( dv ? "mapped" : fr_int2str(dict_attr_types, vp->da->type, "<INVALID>") );
-		len = snprintf(p, freespace - 2, "\"%s\":{\"type:\":\"%s\",\"value\":[", vp->da->name, type);
+		len = snprintf(p, freespace - 2, "\"%s\":{\"type\":\"%s\",\"value\":[", vp->da->name, type);
 		if (len > freespace - 2) {
 			/* Skip possible more multi-values of this attribute and advance cursor */
 			while ((next = fr_cursor_next(&cursor)) && (vp->da == next->da)) vp = next;
