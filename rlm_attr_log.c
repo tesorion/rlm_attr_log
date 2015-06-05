@@ -402,22 +402,18 @@ static int mod_detach(void *instance)
 	return 0;
 }
 
+extern module_t rlm_attr_log;
 module_t rlm_attr_log = {
-	RLM_MODULE_INIT,
-	"attr_log",
-	RLM_TYPE_THREAD_SAFE,
-	sizeof(rlm_attr_log_t),
-	module_config,
-	mod_instantiate,   /* instantiation */
-	mod_detach,        /* detach */
-	{
-		NULL,           /* authentication */
-		NULL,           /* authorization */
-		mod_preacct,    /* preaccounting */
-		mod_accounting, /* accounting */
-		NULL,           /* checksimul */
-		NULL,           /* pre-proxy */
-		NULL,           /* post-proxy */
-		mod_post_auth   /* post-auth */
-	},
+	.magic = RLM_MODULE_INIT,
+	.name = "attr_log",
+	.type = RLM_TYPE_THREAD_SAFE,
+	.inst_size = sizeof(rlm_attr_log_t),
+	.config = module_config,
+	.instantiate = mod_instantiate,
+	.detach = mod_detach,
+	.methods = {
+		[MOD_PREACCT] = mod_preacct,
+		[MOD_ACCOUNTING] = mod_accounting,
+		[MOD_POST_AUTH] = mod_post_auth
+	}
 };
