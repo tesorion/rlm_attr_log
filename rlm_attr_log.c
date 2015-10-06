@@ -179,14 +179,14 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 		len = snprintf(p, freespace - 1 /* for closing curly bracket */, "\"%s\":{", packet_type);
 		if (len > freespace - 1)
 			return 0;
-		
+
 		p += len;
 		freespace -= len + 1 /* Reserve 1 byte for the closing curly bracket */;
 		encoded = p;
 	}
 
 	/* Make sure multi-valued attributes are grouped together */
-	pairsort(&packet->vps, attrtagcmp);
+	fr_pair_list_sort(&packet->vps, fr_pair_cmp_by_da_tag);
 
 	fr_cursor_init(&cursor, &packet->vps);
 	next_attr: for (;;) {
@@ -229,7 +229,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 
 		/* Add values */
 		for (;;) {
-			len = ( dv ? snprintf(p, freespace, "\"%s\"", dv->name) :  vp_prints_value_json(p, freespace, vp) );
+			len = ( dv ? (size_t)snprintf(p, freespace, "\"%s\"", dv->name) :  vp_prints_value_json(p, freespace, vp) );
 			if (len > freespace) goto no_space;
 			p += len;
 			freespace -= len;
