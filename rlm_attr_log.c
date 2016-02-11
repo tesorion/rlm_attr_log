@@ -163,7 +163,7 @@ err_out:
 }
 
 /* Based upon rest_encode_json() from 'rlm_rest/rest.c', though heavily simplified */
-static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_PACKET *packet, const char *packet_type, char *out, size_t size)
+static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, VALUE_PAIR *vps, const char *packet_type, char *out, size_t size)
 {
 	vp_cursor_t cursor;
 	DICT_VALUE *dv;
@@ -186,9 +186,9 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 	}
 
 	/* Make sure multi-valued attributes are grouped together */
-	fr_pair_list_sort(&packet->vps, fr_pair_cmp_by_da_tag);
+	fr_pair_list_sort(&vps, fr_pair_cmp_by_da_tag);
 
-	fr_cursor_init(&cursor, &packet->vps);
+	fr_cursor_init(&cursor, &vps);
 	next_attr: for (;;) {
 		vp = fr_cursor_current(&cursor);
 
@@ -310,7 +310,7 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 		WARN("rlm_attr_log: no request packet to log");
 	} else {
 		/* Add request */
-		len = log_attrs_json(inst, request, request->packet, "request", cur, freespace);
+		len = log_attrs_json(inst, request, request->packet->vps, "request", cur, freespace);
 		if (len == 0) {
 			truncated = 1;
 		} else {
@@ -325,7 +325,7 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 		WARN("rlm_attr_log: no reply packet to log");
 	} else {
 		/* Add reply (and skip 1 byte for ',' on succes) */
-		len = log_attrs_json(inst, request, request->reply, "reply", cur + 1, freespace - 1);
+		len = log_attrs_json(inst, request, request->reply->vps, "reply", cur + 1, freespace - 1);
 		if (len == 0) {
 			truncated = 1;
 		} else {
