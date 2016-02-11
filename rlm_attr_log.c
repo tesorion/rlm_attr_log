@@ -339,10 +339,28 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 
 	DEBUG3("rlm_attr_log: added reply");
 
+	if (!request->state) {
+		WARN("rlm_attr_log: no session-state packet to log");
+	} else {
+		/* Add session-state (and skip 1 byt for ',' on success) */
+		len = log_attrs_json(inst, request, request->state, "session-state", cur + 1, freespace - 1);
+		if (len == 0) {
+			truncated = 1;
+		} else {
+			*cur++ = ',';
+			freespace --;
+
+			cur += len;
+			freespace -= len;
+		}
+	}
+
+	DEBUG3("rlm_attr_log: added session-state");
+
 	*cur++ = '}'; /* Space already reserved earlier on */
 
 	if (truncated)
-		WARN("rlm_attr_log: unable to fit both request and reply in output buffer");
+		WARN("rlm_attr_log: unable to fit request, reply and session-state in output buffer");
 
 	DEBUG3("rlm_attr_log: message complete");
 
