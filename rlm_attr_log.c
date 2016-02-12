@@ -346,7 +346,18 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 
 	DEBUG3("rlm_attr_log: message complete");
 
-	len = send(inst->sockfd, out, cur - out, MSG_DONTWAIT);
+	/* We would occasionally get an unexpected EPERM error when calling send()
+	 * The suggested workaround is trying to pace udp sending. So we now retry
+	 * on failed send for this and EAGAIN (EWOULDBLOCK) and wait a short while.
+	 */
+	for (int attempt = 1; attempt <= 3; attempt++) {
+		len = send(inst->sockfd, out, cur - out, MSG_DONTWAIT);
+		if (len != -1 || (errno != EPERM && errno != EAGAIN)) {
+			break;
+		}
+		DEBUG("rlm_attr_log: retry send due to error: %s", fr_syserror(errno));
+		usleep(100);
+	}
 	if (len == -1) {
 		WARN("rlm_attr_log: error sending log message: %s", fr_syserror(errno));
 	} else if (len < cur - out) {
