@@ -20,8 +20,9 @@
  * @file rlm_attr_log.c
  * @brief Qnet specific logging code.
  *
- * @copyright 2013 Quarantainenet
+ * @copyright 2013-2017 Quarantainenet
  * @copyright 2013 Justin Ossevoort \<justin@quarantainenet.nl\>
+ * @copyright 2017 Herwin Weststrate \<herwin@quarantainenet.nl\>
  */
 RCSID("$Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $")
 
@@ -62,6 +63,72 @@ static int attr_cmp(void const *a, void const *b)
 	return one - two;
 }
 
+/**
+ * Code from 'rlm_detail'
+ */
+static int initialize_hashtable(CONF_SECTION *conf, const char *section, fr_hash_table_t **out)
+{
+	fr_hash_table_t *ht = NULL;
+	CONF_SECTION *cs = cf_section_sub_find(conf, section);
+	if (cs) {
+		CONF_ITEM *ci;
+
+		ht = fr_hash_table_create(attr_hash, attr_cmp, NULL);
+
+		for (ci = cf_item_find_next(cs, NULL);
+		     ci != NULL;
+		     ci = cf_item_find_next(cs, ci)) {
+			char const *attr;
+			DICT_ATTR const *da;
+
+			if (!cf_item_is_pair(ci)) continue;
+
+			attr = cf_pair_attr(cf_item_to_pair(ci));
+			if (!attr) continue; /* pair-anoia */
+
+			da = dict_attrbyname(attr);
+			if (!da) {
+				cf_log_err_cs(conf, "No such attribute '%s'", attr);
+				goto err_out;
+			}
+
+			/*
+			 * Be kind to minor mistakes.
+			 */
+			if (fr_hash_table_finddata(ht, da)) {
+				WARN("rlm_attr_log: Ignoring duplicate entry '%s'", attr);
+				continue;
+			}
+
+
+			if (!fr_hash_table_insert(ht, da)) {
+				ERROR("rlm_attr_log: Failed inserting '%s' into %s table", attr, section);
+				goto err_out;
+			}
+
+			DEBUG("rlm_attr_log: '%s' added to %s table", attr, section);
+		}
+
+		/*
+		 * If we didn't suppress anything, delete the hash table.
+		 */
+		if (fr_hash_table_num_elements(ht) == 0) {
+			fr_hash_table_free(ht);
+			ht = NULL;
+		}
+	}
+	*out = ht;
+	return 0;
+
+err_out:
+	if (ht) {
+		fr_hash_table_free(ht);
+		ht = NULL;
+	}
+	*out = ht;
+	return 1;
+}
+
 static int mod_instantiate(CONF_SECTION *conf, void *instance)
 {
 	DEBUG3("rlm_attr_log: Initializing");
@@ -93,66 +160,13 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 
 	/*
 	 * Suppress certain attributes.
-	 *
-	 * Code from 'rlm_detail'
 	 */
-	CONF_SECTION *cs = cf_section_sub_find(conf, "suppress");
-	if (cs) {
-		CONF_ITEM *ci;
-
-		inst->ht = fr_hash_table_create(attr_hash, attr_cmp, NULL);
-
-		for (ci = cf_item_find_next(cs, NULL);
-		     ci != NULL;
-		     ci = cf_item_find_next(cs, ci)) {
-			char const *attr;
-			DICT_ATTR const *da;
-
-			if (!cf_item_is_pair(ci)) continue;
-
-			attr = cf_pair_attr(cf_item_to_pair(ci));
-			if (!attr) continue; /* pair-anoia */
-
-			da = dict_attrbyname(attr);
-			if (!da) {
-				cf_log_err_cs(conf, "No such attribute '%s'", attr);
-				goto err_out;
-			}
-
-			/*
-			 * Be kind to minor mistakes.
-			 */
-			if (fr_hash_table_finddata(inst->ht, da)) {
-				WARN("rlm_attr_log: Ignoring duplicate entry '%s'", attr);
-				continue;
-			}
-
-
-			if (!fr_hash_table_insert(inst->ht, da)) {
-				ERROR("rlm_attr_log: Failed inserting '%s' into suppression table", attr);
-				goto err_out;
-			}
-
-			DEBUG("rlm_attr_log: '%s' suppressed, will not appear in detail output", attr);
-		}
-
-		/*
-		 * If we didn't suppress anything, delete the hash table.
-		 */
-		if (fr_hash_table_num_elements(inst->ht) == 0) {
-			fr_hash_table_free(inst->ht);
-			inst->ht = NULL;
-		}
-	}
+	if (initialize_hashtable(conf, "suppress", &inst->ht)) goto err_out;
 
 	DEBUG2("rlm_attr_log: Initialized");
 	return 0;
 
 err_out:
-	if (inst->ht) {
-		fr_hash_table_free(inst->ht);
-		inst->ht = NULL;
-	}
 	if (inst->sockfd >= 0) {
 		close(inst->sockfd);
 		inst->sockfd = -1;
