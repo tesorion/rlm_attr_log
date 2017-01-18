@@ -32,6 +32,7 @@ RCSID("$Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $")
 
 typedef struct rlm_attr_log_t {
 	fr_hash_table_t *blacklist; /* When certain attributes should be blacklisted */
+	fr_hash_table_t *whitelist; /* When certain attributes are the only ones to be shown */
 	uint32_t log_size;          /* Maximim size of the log message to generate */
 	char const *prefix;         /* Prefix to include before every log message */
 	fr_ipaddr_t ip;             /* IP address to send logging to */
@@ -136,6 +137,7 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 	rlm_attr_log_t *inst = instance;
 	inst->sockfd = -1;
 	inst->blacklist = NULL;
+	inst->whitelist = NULL;
 
 	/*
 	 * Setup logging socket
@@ -159,9 +161,10 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 	}
 
 	/*
-	 * Blacklist certain attributes.
+	 * Blacklist/Whitelist certain attributes.
 	 */
 	if (initialize_hashtable(conf, "blacklist", &inst->blacklist)) goto err_out;
+	if (initialize_hashtable(conf, "whitelist", &inst->whitelist)) goto err_out;
 
 	DEBUG2("rlm_attr_log: Initialized");
 	return 0;
@@ -212,6 +215,12 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 		/* Blacklist certain attributes */
 		if (inst->blacklist && fr_hash_table_finddata(inst->blacklist, vp->da)) {
 			/* Skip possible more multi-values of this attribute and advance cursor */
+			while ((next = fr_cursor_next(&cursor)) && (vp->da == next->da)) vp = next;
+			continue;
+		}
+
+		/* Whitelist certain attributes */
+		if (inst->whitelist && !fr_hash_table_finddata(inst->whitelist, vp->da)) {
 			while ((next = fr_cursor_next(&cursor)) && (vp->da == next->da)) vp = next;
 			continue;
 		}
@@ -417,6 +426,10 @@ static int mod_detach(void *instance)
 	if (inst->blacklist) {
 		fr_hash_table_free(inst->blacklist);
 		inst->blacklist = NULL;
+	}
+	if (inst->whitelist) {
+		fr_hash_table_free(inst->whitelist);
+		inst->whitelist = NULL;
 	}
 	if (inst->sockfd >= 0) {
 		close(inst->sockfd);
