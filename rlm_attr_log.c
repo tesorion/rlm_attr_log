@@ -165,6 +165,13 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 	 */
 	if (initialize_hashtable(conf, "blacklist", &inst->blacklist)) goto err_out;
 	if (initialize_hashtable(conf, "whitelist", &inst->whitelist)) goto err_out;
+	if (inst->blacklist && inst->whitelist) {
+		ERROR("rlm_attr_log: Specified both a blacklist and a whitelist, this is not supported");
+		fr_hash_table_free(inst->blacklist);
+		fr_hash_table_free(inst->whitelist);
+		inst->blacklist = inst->whitelist = NULL;
+		goto err_out;
+	}
 
 	DEBUG2("rlm_attr_log: Initialized");
 	return 0;
