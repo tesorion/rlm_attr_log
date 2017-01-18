@@ -31,11 +31,11 @@ RCSID("$Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $")
 #include <freeradius-devel/rad_assert.h>
 
 typedef struct rlm_attr_log_t {
-	fr_hash_table_t *ht; /* When certain attributes should be suppressed */
-	uint32_t log_size;   /* Maximim size of the log message to generate */
-	char const *prefix;  /* Prefix to include before every log message */
-	fr_ipaddr_t ip;      /* IP address to send logging to */
-	uint16_t port;       /* UDP port to send logging to */
+	fr_hash_table_t *blacklist; /* When certain attributes should be blacklisted */
+	uint32_t log_size;          /* Maximim size of the log message to generate */
+	char const *prefix;         /* Prefix to include before every log message */
+	fr_ipaddr_t ip;             /* IP address to send logging to */
+	uint16_t port;              /* UDP port to send logging to */
 
 	int sockfd;
 } rlm_attr_log_t;
@@ -110,7 +110,7 @@ static int initialize_hashtable(CONF_SECTION *conf, const char *section, fr_hash
 		}
 
 		/*
-		 * If we didn't suppress anything, delete the hash table.
+		 * If we didn't list anything, delete the hash table.
 		 */
 		if (fr_hash_table_num_elements(ht) == 0) {
 			fr_hash_table_free(ht);
@@ -135,7 +135,7 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 
 	rlm_attr_log_t *inst = instance;
 	inst->sockfd = -1;
-	inst->ht = NULL;
+	inst->blacklist = NULL;
 
 	/*
 	 * Setup logging socket
@@ -159,9 +159,9 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 	}
 
 	/*
-	 * Suppress certain attributes.
+	 * Blacklist certain attributes.
 	 */
-	if (initialize_hashtable(conf, "suppress", &inst->ht)) goto err_out;
+	if (initialize_hashtable(conf, "blacklist", &inst->blacklist)) goto err_out;
 
 	DEBUG2("rlm_attr_log: Initialized");
 	return 0;
@@ -209,8 +209,8 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 		/* Encoded all VPs */
 		if (!vp) break;
 
-		/* Suppress certain attributes */
-		if (inst->ht && fr_hash_table_finddata(inst->ht, vp->da)) {
+		/* Blacklist certain attributes */
+		if (inst->blacklist && fr_hash_table_finddata(inst->blacklist, vp->da)) {
 			/* Skip possible more multi-values of this attribute and advance cursor */
 			while ((next = fr_cursor_next(&cursor)) && (vp->da == next->da)) vp = next;
 			continue;
@@ -414,9 +414,9 @@ static int mod_detach(void *instance)
 	DEBUG3("rlm_attr_log: Detaching");
 
 	rlm_attr_log_t *inst = instance;
-	if (inst->ht) {
-		fr_hash_table_free(inst->ht);
-		inst->ht = NULL;
+	if (inst->blacklist) {
+		fr_hash_table_free(inst->blacklist);
+		inst->blacklist = NULL;
 	}
 	if (inst->sockfd >= 0) {
 		close(inst->sockfd);
