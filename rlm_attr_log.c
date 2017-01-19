@@ -20,8 +20,9 @@
  * @file rlm_attr_log.c
  * @brief Qnet specific logging code.
  *
- * @copyright 2013 Quarantainenet
+ * @copyright 2013-2017 Quarantainenet
  * @copyright 2013 Justin Ossevoort \<justin@quarantainenet.nl\>
+ * @copyright 2017 Herwin Weststrate \<herwin@quarantainenet.nl\>
  */
 RCSID("$Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $")
 
@@ -30,11 +31,12 @@ RCSID("$Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $")
 #include <freeradius-devel/rad_assert.h>
 
 typedef struct rlm_attr_log_t {
-	fr_hash_table_t *ht; /* When certain attributes should be suppressed */
-	uint32_t log_size;   /* Maximim size of the log message to generate */
-	char const *prefix;  /* Prefix to include before every log message */
-	fr_ipaddr_t ip;      /* IP address to send logging to */
-	uint16_t port;       /* UDP port to send logging to */
+	fr_hash_table_t *blacklist; /* When certain attributes should be blacklisted */
+	fr_hash_table_t *whitelist; /* When certain attributes are the only ones to be shown */
+	uint32_t log_size;          /* Maximim size of the log message to generate */
+	char const *prefix;         /* Prefix to include before every log message */
+	fr_ipaddr_t ip;             /* IP address to send logging to */
+	uint16_t port;              /* UDP port to send logging to */
 
 	int sockfd;
 } rlm_attr_log_t;
@@ -62,13 +64,80 @@ static int attr_cmp(void const *a, void const *b)
 	return one - two;
 }
 
+/**
+ * Code from 'rlm_detail'
+ */
+static int initialize_hashtable(CONF_SECTION *conf, const char *section, fr_hash_table_t **out)
+{
+	fr_hash_table_t *ht = NULL;
+	CONF_SECTION *cs = cf_section_sub_find(conf, section);
+	if (cs) {
+		CONF_ITEM *ci;
+
+		ht = fr_hash_table_create(attr_hash, attr_cmp, NULL);
+
+		for (ci = cf_item_find_next(cs, NULL);
+		     ci != NULL;
+		     ci = cf_item_find_next(cs, ci)) {
+			char const *attr;
+			DICT_ATTR const *da;
+
+			if (!cf_item_is_pair(ci)) continue;
+
+			attr = cf_pair_attr(cf_item_to_pair(ci));
+			if (!attr) continue; /* pair-anoia */
+
+			da = dict_attrbyname(attr);
+			if (!da) {
+				cf_log_err_cs(conf, "No such attribute '%s'", attr);
+				goto err_out;
+			}
+
+			/*
+			 * Be kind to minor mistakes.
+			 */
+			if (fr_hash_table_finddata(ht, da)) {
+				WARN("rlm_attr_log: Ignoring duplicate entry '%s'", attr);
+				continue;
+			}
+
+
+			if (!fr_hash_table_insert(ht, da)) {
+				ERROR("rlm_attr_log: Failed inserting '%s' into %s table", attr, section);
+				goto err_out;
+			}
+
+			DEBUG("rlm_attr_log: '%s' added to %s table", attr, section);
+		}
+
+		/*
+		 * If we didn't list anything, delete the hash table.
+		 */
+		if (fr_hash_table_num_elements(ht) == 0) {
+			fr_hash_table_free(ht);
+			ht = NULL;
+		}
+	}
+	*out = ht;
+	return 0;
+
+err_out:
+	if (ht) {
+		fr_hash_table_free(ht);
+		ht = NULL;
+	}
+	*out = ht;
+	return 1;
+}
+
 static int mod_instantiate(CONF_SECTION *conf, void *instance)
 {
 	DEBUG3("rlm_attr_log: Initializing");
 
 	rlm_attr_log_t *inst = instance;
 	inst->sockfd = -1;
-	inst->ht = NULL;
+	inst->blacklist = NULL;
+	inst->whitelist = NULL;
 
 	/*
 	 * Setup logging socket
@@ -92,67 +161,22 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 	}
 
 	/*
-	 * Suppress certain attributes.
-	 *
-	 * Code from 'rlm_detail'
+	 * Blacklist/Whitelist certain attributes.
 	 */
-	CONF_SECTION *cs = cf_section_sub_find(conf, "suppress");
-	if (cs) {
-		CONF_ITEM *ci;
-
-		inst->ht = fr_hash_table_create(attr_hash, attr_cmp, NULL);
-
-		for (ci = cf_item_find_next(cs, NULL);
-		     ci != NULL;
-		     ci = cf_item_find_next(cs, ci)) {
-			char const *attr;
-			DICT_ATTR const *da;
-
-			if (!cf_item_is_pair(ci)) continue;
-
-			attr = cf_pair_attr(cf_item_to_pair(ci));
-			if (!attr) continue; /* pair-anoia */
-
-			da = dict_attrbyname(attr);
-			if (!da) {
-				cf_log_err_cs(conf, "No such attribute '%s'", attr);
-				goto err_out;
-			}
-
-			/*
-			 * Be kind to minor mistakes.
-			 */
-			if (fr_hash_table_finddata(inst->ht, da)) {
-				WARN("rlm_attr_log: Ignoring duplicate entry '%s'", attr);
-				continue;
-			}
-
-
-			if (!fr_hash_table_insert(inst->ht, da)) {
-				ERROR("rlm_attr_log: Failed inserting '%s' into suppression table", attr);
-				goto err_out;
-			}
-
-			DEBUG("rlm_attr_log: '%s' suppressed, will not appear in detail output", attr);
-		}
-
-		/*
-		 * If we didn't suppress anything, delete the hash table.
-		 */
-		if (fr_hash_table_num_elements(inst->ht) == 0) {
-			fr_hash_table_free(inst->ht);
-			inst->ht = NULL;
-		}
+	if (initialize_hashtable(conf, "blacklist", &inst->blacklist)) goto err_out;
+	if (initialize_hashtable(conf, "whitelist", &inst->whitelist)) goto err_out;
+	if (inst->blacklist && inst->whitelist) {
+		ERROR("rlm_attr_log: Specified both a blacklist and a whitelist, this is not supported");
+		fr_hash_table_free(inst->blacklist);
+		fr_hash_table_free(inst->whitelist);
+		inst->blacklist = inst->whitelist = NULL;
+		goto err_out;
 	}
 
 	DEBUG2("rlm_attr_log: Initialized");
 	return 0;
 
 err_out:
-	if (inst->ht) {
-		fr_hash_table_free(inst->ht);
-		inst->ht = NULL;
-	}
 	if (inst->sockfd >= 0) {
 		close(inst->sockfd);
 		inst->sockfd = -1;
@@ -195,9 +219,15 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 		/* Encoded all VPs */
 		if (!vp) break;
 
-		/* Suppress certain attributes */
-		if (inst->ht && fr_hash_table_finddata(inst->ht, vp->da)) {
+		/* Blacklist certain attributes */
+		if (inst->blacklist && fr_hash_table_finddata(inst->blacklist, vp->da)) {
 			/* Skip possible more multi-values of this attribute and advance cursor */
+			while ((next = fr_cursor_next(&cursor)) && (vp->da == next->da)) vp = next;
+			continue;
+		}
+
+		/* Whitelist certain attributes */
+		if (inst->whitelist && !fr_hash_table_finddata(inst->whitelist, vp->da)) {
 			while ((next = fr_cursor_next(&cursor)) && (vp->da == next->da)) vp = next;
 			continue;
 		}
@@ -400,9 +430,13 @@ static int mod_detach(void *instance)
 	DEBUG3("rlm_attr_log: Detaching");
 
 	rlm_attr_log_t *inst = instance;
-	if (inst->ht) {
-		fr_hash_table_free(inst->ht);
-		inst->ht = NULL;
+	if (inst->blacklist) {
+		fr_hash_table_free(inst->blacklist);
+		inst->blacklist = NULL;
+	}
+	if (inst->whitelist) {
+		fr_hash_table_free(inst->whitelist);
+		inst->whitelist = NULL;
 	}
 	if (inst->sockfd >= 0) {
 		close(inst->sockfd);
