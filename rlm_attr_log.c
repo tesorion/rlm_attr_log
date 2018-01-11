@@ -191,7 +191,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 {
 	vp_cursor_t cursor;
 	DICT_VALUE *dv;
-	VALUE_PAIR *vp, *next;
+	VALUE_PAIR *vp, *vps, *next;
 	char *p = out;           /* Position in buffer */
 	char *encoded = p;       /* Position in buffer of last fully encoded attribute or value */
 	size_t freespace = size; /* Size left in buffer */
@@ -210,9 +210,10 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 	}
 
 	/* Make sure multi-valued attributes are grouped together */
-	fr_pair_list_sort(&packet->vps, fr_pair_cmp_by_da_tag);
+	vps = fr_pair_list_copy(packet, packet->vps);
+	fr_pair_list_sort(&vps, fr_pair_cmp_by_da_tag);
 
-	fr_cursor_init(&cursor, &packet->vps);
+	fr_cursor_init(&cursor, &vps);
 	next_attr: for (;;) {
 		vp = fr_cursor_current(&cursor);
 
@@ -299,6 +300,8 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 			freespace--;
 		}
 	}
+
+	fr_pair_list_free(&vps);
 
 	if (truncated) WARN("rlm_attr_log: output buffer too small, some attributes were left out");
 
