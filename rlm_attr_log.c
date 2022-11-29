@@ -260,7 +260,13 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 
 		/* Add values */
 		for (;;) {
-			len = ( dv ? (size_t)snprintf(p, freespace, "\"%s\"", dv->name) :  vp_prints_value_json(p, freespace, vp) );
+			len = ( dv ?  (size_t)snprintf(p, freespace, "\"%s\"", dv->name) :
+#if RADIUSD_VERSION >= 030022
+				vp_prints_value_json(p, freespace, vp, true)
+#else
+				vp_prints_value_json(p, freespace, vp)
+#endif
+				);
 			if (len > freespace) goto no_space;
 			p += len;
 			freespace -= len;
