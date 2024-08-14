@@ -18,11 +18,12 @@
 /**
  * $Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $
  * @file rlm_attr_log.c
- * @brief Qnet specific logging code.
+ * @brief Tesorion specific logging code.
  *
  * @copyright 2013-2017 Quarantainenet
- * @copyright 2013 Justin Ossevoort \<justin@quarantainenet.nl\>
- * @copyright 2017 Herwin Weststrate \<herwin@quarantainenet.nl\>
+ * @copyright 2019-2024 Tesorion Operations B.V.
+ * @copyright 2013 Justin Ossevoort \<justin.ossevoort@tesorion.nl\>
+ * @copyright 2017-2024 Herwin Weststrate \<herwin.weststrate@tesorion.nl\>
  */
 RCSID("$Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $")
 
