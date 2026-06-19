@@ -356,6 +356,7 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 	DEBUG3("rlm_attr_log: allocated output buffer");
 
 	int truncated = 0, len;
+	ssize_t sent;
 	char *cur = out;
 	int freespace = size;
 
@@ -430,16 +431,16 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 	 * on failed send for this and EAGAIN (EWOULDBLOCK) and wait a short while.
 	 */
 	for (int attempt = 1; attempt <= 3; attempt++) {
-		len = send(inst->sockfd, out, cur - out, MSG_DONTWAIT);
-		if (len != -1 || (errno != EPERM && errno != EAGAIN)) {
+		sent = send(inst->sockfd, out, cur - out, MSG_DONTWAIT);
+		if (sent != -1 || (errno != EPERM && errno != EAGAIN)) {
 			break;
 		}
 		DEBUG("rlm_attr_log: retry send due to error: %s", fr_syserror(errno));
 		usleep(100);
 	}
-	if (len == -1) {
+	if (sent == -1) {
 		WARN("rlm_attr_log: error sending log message: %s", fr_syserror(errno));
-	} else if (len < cur - out) {
+	} else if (sent < cur - out) {
 		WARN("rlm_attr_log: truncated log message");
 	}
 
