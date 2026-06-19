@@ -345,7 +345,7 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 	int truncated = 0, len;
 	ssize_t sent;
 	char *cur = out;
-	int freespace = size;
+	size_t freespace = size;
 
 	if (inst->syslog_header) {
 		char timestamp[17] = { 0 };
@@ -363,10 +363,10 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 		}
 		pid = getpid();
 		len = snprintf(cur, freespace, "<%d>1 %s %s %s %d - - {", inst->facility << 3 | inst->severity, timestamp, utsname.nodename, inst->prefix, pid);
-		rad_assert(len < freespace + 1);
+		rad_assert((size_t)len < freespace + 1);
 	} else {
 		len = snprintf(cur, freespace + 1, "%s{", inst->prefix);
-		rad_assert(len < freespace + 1);
+		rad_assert((size_t)len < freespace + 1);
 	}
 	cur += len;
 	freespace -= len + 1 /* Reserve 1 byte for closing curly bracket */;
