@@ -262,7 +262,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 		/* Add values */
 		for (;;) {
 			len = ( dv ?  (size_t)snprintf(p, freespace, "\"%s\"", dv->name) :
-#if RADIUSD_VERSION >= 030022
+#if HEXIFY(RADIUSD_VERSION) >= HEXIFY(030022)
 				vp_prints_value_json(p, freespace, vp, true)
 #else
 				vp_prints_value_json(p, freespace, vp)
