@@ -31,6 +31,8 @@ RCSID("$Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $")
 #include <freeradius-devel/modules.h>
 #include <freeradius-devel/rad_assert.h>
 
+#include <sys/utsname.h>
+
 typedef struct rlm_attr_log_t {
 	fr_hash_table_t *blacklist; /* When certain attributes should be blacklisted */
 	fr_hash_table_t *whitelist; /* When certain attributes are the only ones to be shown */
@@ -39,14 +41,21 @@ typedef struct rlm_attr_log_t {
 	fr_ipaddr_t ip;             /* IP address to send logging to */
 	uint16_t port;              /* UDP port to send logging to */
 
+	bool syslog_header;         /* Send over UDP with syslog header */
+	uint8_t facility;           /* Syslog facility, 0 <= facility <= 23 */
+	uint8_t severity;           /* Syslog severity, 0 <= severity <= 7 */
+
 	int sockfd;
 } rlm_attr_log_t;
 
 static const CONF_PARSER module_config[] = {
-	{ "log_size", FR_CONF_OFFSET(PW_TYPE_INTEGER,   rlm_attr_log_t, log_size), "65400"     },
-	{ "prefix",   FR_CONF_OFFSET(PW_TYPE_STRING,    rlm_attr_log_t, prefix  ), "Qradius: " },
-	{ "ip",       FR_CONF_OFFSET(PW_TYPE_IPV4_ADDR, rlm_attr_log_t, ip      ), "127.0.0.1" },
-	{ "port",     FR_CONF_OFFSET(PW_TYPE_SHORT,     rlm_attr_log_t, port    ), "1514"      },
+	{ "log_size",      FR_CONF_OFFSET(PW_TYPE_INTEGER,   rlm_attr_log_t, log_size     ), "65400"     },
+	{ "prefix",        FR_CONF_OFFSET(PW_TYPE_STRING,    rlm_attr_log_t, prefix       ), "Qradius: " },
+	{ "ip",            FR_CONF_OFFSET(PW_TYPE_IPV4_ADDR, rlm_attr_log_t, ip           ), "127.0.0.1" },
+	{ "port",          FR_CONF_OFFSET(PW_TYPE_SHORT,     rlm_attr_log_t, port         ), "1514"      },
+	{ "syslog_header", FR_CONF_OFFSET(PW_TYPE_BOOLEAN,   rlm_attr_log_t, syslog_header), "no"        },
+	{ "facility",      FR_CONF_OFFSET(PW_TYPE_BYTE,      rlm_attr_log_t, facility     ), "16"        },
+	{ "severity",      FR_CONF_OFFSET(PW_TYPE_BYTE,      rlm_attr_log_t, severity     ), "6"         },
 
 	{ NULL, -1, 0, NULL, NULL } /* end the list */
 };
@@ -172,6 +181,17 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 		fr_hash_table_free(inst->whitelist);
 		inst->blacklist = inst->whitelist = NULL;
 		goto err_out;
+	}
+
+	if (inst->syslog_header) {
+		if (inst->facility > 23) {
+			ERROR("rlm_attr_log: value for facility should be at most 23");
+			goto err_out;
+		}
+		if (inst->severity > 7) {
+			ERROR("rlm_attr_log: value for severity should be at most 7");
+			goto err_out;
+		}
 	}
 
 	DEBUG2("rlm_attr_log: Initialized");
@@ -339,12 +359,31 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 	char *cur = out;
 	int freespace = size;
 
-	len = snprintf(cur, freespace + 1, "%s{", inst->prefix);
-	rad_assert(len < freespace + 1);
+	if (inst->syslog_header) {
+		char timestamp[17] = { 0 };
+		time_t t;
+		struct tm *tm;
+		struct utsname utsname;
+		pid_t pid;
+
+		t = time(NULL);
+		tm = localtime(&t);
+		strftime(timestamp, sizeof(timestamp) - 1, "%b %e %H:%M:%S", tm);
+		if (uname(&utsname) < 0) {
+			ERROR("rlm_attr_log: unable to find hostname");
+			return;
+		}
+		pid = getpid();
+		len = snprintf(cur, freespace, "<%d>1 %s %s %s %d - - {", inst->facility << 3 | inst->severity, timestamp, utsname.nodename, inst->prefix, pid);
+		rad_assert(len < freespace + 1);
+	} else {
+		len = snprintf(cur, freespace + 1, "%s{", inst->prefix);
+		rad_assert(len < freespace + 1);
+	}
 	cur += len;
 	freespace -= len + 1 /* Reserve 1 byte for closing curly bracket */;
 
-	DEBUG3("rlm_attr_log: added prefix");
+	DEBUG3("rlm_attr_log: added header");
 
 	if (!request->packet) {
 		WARN("rlm_attr_log: no request packet to log");
