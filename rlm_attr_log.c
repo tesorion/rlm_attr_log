@@ -189,7 +189,7 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 			goto err_out;
 		}
 		if (inst->severity > 7) {
-			ERROR("rlm_attr_log: value for severity should be at most 7");
+			ERROR("rlm_attr_log: value for severity should be at least 7");
 			goto err_out;
 		}
 	}
