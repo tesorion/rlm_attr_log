@@ -13,7 +13,7 @@
  *   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-/* Partially based and insipired on rlm_detail and rlm_rest */
+/* Partially based and inspired on rlm_detail and rlm_rest */
 
 /**
  * $Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $
@@ -36,7 +36,7 @@ RCSID("$Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $")
 typedef struct rlm_attr_log_t {
 	fr_hash_table_t *blacklist; /* When certain attributes should be blacklisted */
 	fr_hash_table_t *whitelist; /* When certain attributes are the only ones to be shown */
-	uint32_t log_size;          /* Maximim size of the log message to generate */
+	uint32_t log_size;          /* Maximum size of the log message to generate */
 	char const *prefix;         /* Prefix to include before every log message */
 	fr_ipaddr_t ip;             /* IP address to send logging to */
 	uint16_t port;              /* UDP port to send logging to */
@@ -277,7 +277,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 			continue;
 		}
 		p += len;
-		freespace -= len  + 2 /* Reserve 2 bytes for closing backet and curly bracket */;
+		freespace -= len  + 2 /* Reserve 2 bytes for closing bracket and curly bracket */;
 
 		/* Add values */
 		for (;;) {
@@ -303,7 +303,7 @@ static int log_attrs_json(rlm_attr_log_t *inst, UNUSED REQUEST *request, RADIUS_
 			continue;
 
 		no_space:
-			/* Rewind to last succesfully encoded offset */
+			/* Rewind to last successfully encoded offset */
 			p = encoded;
 			freespace = size - (p - out);
 
@@ -403,7 +403,7 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 	if (!request->reply) {
 		WARN("rlm_attr_log: no reply packet to log");
 	} else {
-		/* Add reply (and skip 1 byte for ',' on succes) */
+		/* Add reply (and skip 1 byte for ',' on success) */
 		len = log_attrs_json(inst, request, request->reply, "reply", cur + 1, freespace - 1);
 		if (len == 0) {
 			truncated = 1;
