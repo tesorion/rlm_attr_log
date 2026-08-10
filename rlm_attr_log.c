@@ -152,21 +152,8 @@ static int mod_instantiate(CONF_SECTION *conf, void *instance)
 	/*
 	 * Setup logging socket
 	 */
-
-	struct sockaddr_in sin = {
-		.sin_family = AF_INET,
-		.sin_port   = htons(inst->port),
-		.sin_addr   = inst->ip.ipaddr.ip4addr
-	};
-
-	int r = inst->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-	if (r == -1) {
-		ERROR("rlm_attr_log: Failed to create logging socket: %s", fr_strerror());
-		goto err_out;
-	}
-	r = connect(inst->sockfd, &sin, sizeof(sin));
-	if (r == -1) {
-		ERROR("rlm_attr_log: Failed to connect logging socket: %s", fr_strerror());
+	inst->sockfd = fr_socket_client_udp(NULL, &inst->ip, inst->port, false);
+	if (inst->sockfd == -1) {
 		goto err_out;
 	}
 
