@@ -49,13 +49,13 @@ typedef struct rlm_attr_log_t {
 } rlm_attr_log_t;
 
 static const CONF_PARSER module_config[] = {
-	{ "log_size",      FR_CONF_OFFSET(PW_TYPE_INTEGER,   rlm_attr_log_t, log_size     ), "65400"     },
-	{ "prefix",        FR_CONF_OFFSET(PW_TYPE_STRING,    rlm_attr_log_t, prefix       ), "Qradius: " },
-	{ "ip",            FR_CONF_OFFSET(PW_TYPE_IPV4_ADDR, rlm_attr_log_t, ip           ), "127.0.0.1" },
-	{ "port",          FR_CONF_OFFSET(PW_TYPE_SHORT,     rlm_attr_log_t, port         ), "1514"      },
-	{ "syslog_header", FR_CONF_OFFSET(PW_TYPE_BOOLEAN,   rlm_attr_log_t, syslog_header), "no"        },
-	{ "facility",      FR_CONF_OFFSET(PW_TYPE_BYTE,      rlm_attr_log_t, facility     ), "16"        },
-	{ "severity",      FR_CONF_OFFSET(PW_TYPE_BYTE,      rlm_attr_log_t, severity     ), "6"         },
+	{ "log_size",      FR_CONF_OFFSET(PW_TYPE_INTEGER,       rlm_attr_log_t, log_size     ), "65400"     },
+	{ "prefix",        FR_CONF_OFFSET(PW_TYPE_STRING,        rlm_attr_log_t, prefix       ), "Qradius: " },
+	{ "ip",            FR_CONF_OFFSET(PW_TYPE_COMBO_IP_ADDR, rlm_attr_log_t, ip           ), "127.0.0.1" },
+	{ "port",          FR_CONF_OFFSET(PW_TYPE_SHORT,         rlm_attr_log_t, port         ), "1514"      },
+	{ "syslog_header", FR_CONF_OFFSET(PW_TYPE_BOOLEAN,       rlm_attr_log_t, syslog_header), "no"        },
+	{ "facility",      FR_CONF_OFFSET(PW_TYPE_BYTE,          rlm_attr_log_t, facility     ), "16"        },
+	{ "severity",      FR_CONF_OFFSET(PW_TYPE_BYTE,          rlm_attr_log_t, severity     ), "6"         },
 
 	{ NULL, -1, 0, NULL, NULL } /* end the list */
 };
