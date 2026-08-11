@@ -36,7 +36,7 @@ RCSID("$Id: 3b250c4f890164d0e35f54e9d9319f280942a0df $")
 typedef struct rlm_attr_log_t {
 	fr_hash_table_t *blacklist; /* When certain attributes should be blacklisted */
 	fr_hash_table_t *whitelist; /* When certain attributes are the only ones to be shown */
-	uint32_t log_size;          /* Maximum size of the log message to generate */
+	uint16_t log_size;          /* Maximum size of the log message to generate */
 	char const *prefix;         /* Prefix to include before every log message */
 	fr_ipaddr_t ip;             /* IP address to send logging to */
 	uint16_t port;              /* UDP port to send logging to */
@@ -49,7 +49,7 @@ typedef struct rlm_attr_log_t {
 } rlm_attr_log_t;
 
 static const CONF_PARSER module_config[] = {
-	{ "log_size",      FR_CONF_OFFSET(PW_TYPE_INTEGER,       rlm_attr_log_t, log_size     ), "65400"     },
+	{ "log_size",      FR_CONF_OFFSET(PW_TYPE_SHORT,         rlm_attr_log_t, log_size     ), "65400"     },
 	{ "prefix",        FR_CONF_OFFSET(PW_TYPE_STRING,        rlm_attr_log_t, prefix       ), "Qradius: " },
 	{ "ip",            FR_CONF_OFFSET(PW_TYPE_COMBO_IP_ADDR, rlm_attr_log_t, ip           ), "127.0.0.1" },
 	{ "port",          FR_CONF_OFFSET(PW_TYPE_SHORT,         rlm_attr_log_t, port         ), "1514"      },
