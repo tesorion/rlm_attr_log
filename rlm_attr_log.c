@@ -362,11 +362,11 @@ static void log_request(rlm_attr_log_t *inst, REQUEST *request)
 			return;
 		}
 		pid = getpid();
-		len = snprintf(cur, freespace, "<%d>1 %s %s %s %d - - {", inst->facility << 3 | inst->severity, timestamp, utsname.nodename, inst->prefix, pid);
-		rad_assert((size_t)len < freespace + 1);
+		len = snprintf(cur, freespace - 1, "<%d>1 %s %s %s %d - - {", inst->facility << 3 | inst->severity, timestamp, utsname.nodename, inst->prefix, pid);
+		rad_assert((size_t)len < freespace - 1);
 	} else {
-		len = snprintf(cur, freespace + 1, "%s{", inst->prefix);
-		rad_assert((size_t)len < freespace + 1);
+		len = snprintf(cur, freespace - 1, "%s{", inst->prefix);
+		rad_assert((size_t)len < freespace - 1);
 	}
 	cur += len;
 	freespace -= len + 1 /* Reserve 1 byte for closing curly bracket */;
